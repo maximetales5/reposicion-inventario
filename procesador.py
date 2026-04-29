@@ -54,10 +54,27 @@ def parse_xls(filepath):
             df = pd.read_excel(filepath, engine="calamine", header=None)
         except Exception:
             df = pd.read_excel(filepath, engine="openpyxl", header=None)
+
+    ncols = df.shape[1]
     branch_starts = {}
     for col_idx, val in enumerate(df.iloc[1, :]):
         if pd.notna(val) and str(val).strip() and col_idx > 1:
             branch_starts[str(val).strip()] = col_idx
+
+    # Detectar offsets reales de P.Vtas y Saldo para cada sucursal
+    branch_offsets = {}
+    for bname, bcol in branch_starts.items():
+        pvtas_off, saldo_off = 1, 4
+        for offset in range(1, 9):
+            if bcol + offset >= ncols:
+                break
+            h = str(df.iloc[2, bcol + offset]).strip() if pd.notna(df.iloc[2, bcol + offset]) else ''
+            if h == 'P.Vtas':
+                pvtas_off = offset
+            if h == 'Saldo':
+                saldo_off = offset
+        branch_offsets[bname] = (pvtas_off, saldo_off)
+
     products = []
     for row_idx in range(3, len(df)):
         item = df.iloc[row_idx, 0]
@@ -66,8 +83,9 @@ def parse_xls(filepath):
             continue
         prod = {'item': str(item).strip(), 'desc': str(desc).strip() if pd.notna(desc) else ''}
         for bname, bcol in branch_starts.items():
-            pvtas = df.iloc[row_idx, bcol + 1]
-            saldo = df.iloc[row_idx, bcol + 4]
+            pvtas_off, saldo_off = branch_offsets[bname]
+            pvtas = df.iloc[row_idx, bcol + pvtas_off] if bcol + pvtas_off < ncols else 0
+            saldo = df.iloc[row_idx, bcol + saldo_off] if bcol + saldo_off < ncols else 0
             prod[f'{bname}__pvtas'] = float(pvtas) if pd.notna(pvtas) else 0.0
             prod[f'{bname}__saldo'] = float(saldo) if pd.notna(saldo) else 0.0
         products.append(prod)
@@ -222,6 +240,7 @@ def sheet_rep_saldo(wb, products, branches, dias):
             c.fill = _fill(fill); c.alignment = _left() if left else _center()
             c.border = _border()
 
+        # Fila Reponer
         r = base
         sc(r,1,p['item'],C_ROW_A,bold=True); sc(r,2,p['desc'],C_ROW_A,left=True,bold=True)
         sc(r,3,"📦 Reponer",C_REPONER,bold=True,left=True)
@@ -237,6 +256,7 @@ def sheet_rep_saldo(wb, products, branches, dias):
         ec=ws.cell(r,estado_col,est); ec.font=_font(bold=True,size=11)
         ec.fill=_fill(_estado_color(est)); ec.alignment=_center(); ec.border=_border()
 
+        # Fila Saldo
         r = base+1
         ws.cell(r,1).border=_border(); ws.cell(r,2).border=_border()
         sc(r,3,"📊 Saldo bodega",C_SALDO_ROW,bold=True,left=True)
@@ -248,6 +268,7 @@ def sheet_rep_saldo(wb, products, branches, dias):
         tc2.font=_font(bold=True,size=11); tc2.fill=_fill(C_HDR_LIGHT); tc2.alignment=_center(); tc2.border=_border()
         ws.cell(r,estado_col).border=_border()
 
+        # Fila PVtas
         r = base+2
         ws.cell(r,1).border=_border(); ws.cell(r,2).border=_border()
         sc(r,3,"📈 P.Vtas/Mes",rf,bold=True,left=True)
@@ -357,7 +378,8 @@ def sheet_detalle_sucursal(wb, products, branches, dias):
     REF="'Consolidado Reposición'!$B$1"
     row=2
     for p in products:
-        for b in branches + ["11 Mapa 2"]:
+        all_branches = branches + ["11 Mapa 2"]
+        for b in all_branches:
             is_mapa2 = (b=="11 Mapa 2")
             pvt = _avg_pvtas(p,branches) if is_mapa2 else p[f'{b}__pvtas']
             sal = 0 if is_mapa2 else p[f'{b}__saldo']
@@ -396,12 +418,10 @@ def sheet_saldos(wb, products, branches):
     ws[f"{get_column_letter(mapa2_col)}2"].value="11 Mapa 2"
     ws[f"{get_column_letter(mapa2_col)}2"].font=_font(bold=True,color="7F4F00",size=10)
     ws[f"{get_column_letter(mapa2_col)}2"].fill=_fill(C_MAPA2_HD)
-    ws[f"{get_column_letter(mapa2_col)}2"].alignment=_center()
-    ws[f"{get_column_letter(mapa2_col)}2"].border=_border()
+    ws[f"{get_column_letter(mapa2_col)}2"].alignment=_center(); ws[f"{get_column_letter(mapa2_col)}2"].border=_border()
     _hdr(ws,f"{get_column_letter(total_col)}2","Total Saldo")
     ws.column_dimensions["A"].width=11; ws.column_dimensions["B"].width=48
-    for ci in range(3,total_col+1):
-        ws.column_dimensions[get_column_letter(ci)].width=13
+    for ci in range(3,total_col+1): ws.column_dimensions[get_column_letter(ci)].width=13
 
     for pi,p in enumerate(products):
         row=pi+3; rf=_row_fill(pi)
