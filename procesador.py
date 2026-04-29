@@ -50,7 +50,10 @@ def parse_xls(filepath):
     try:
         df = pd.read_excel(filepath, engine="xlrd", header=None)
     except Exception:
-        df = pd.read_excel(filepath, engine="openpyxl", header=None)
+        try:
+            df = pd.read_excel(filepath, engine="calamine", header=None)
+        except Exception:
+            df = pd.read_excel(filepath, engine="openpyxl", header=None)
     branch_starts = {}
     for col_idx, val in enumerate(df.iloc[1, :]):
         if pd.notna(val) and str(val).strip() and col_idx > 1:
