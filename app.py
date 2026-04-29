@@ -10,7 +10,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main { max-width: 700px; margin: auto; }
+    .main { max-width: 750px; margin: auto; }
     .stButton>button {
         background-color: #1F3864;
         color: white;
@@ -27,24 +27,48 @@ st.markdown("""
         border-radius: 6px;
         margin-top: 10px;
     }
+    .section-title {
+        font-weight: bold;
+        color: #1F3864;
+        font-size: 15px;
+        margin-top: 10px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("📦 Generador de Reposición de Inventario")
-st.markdown("Sube tu archivo `.xls` o `.xlsx` de inventario y descarga el reporte listo para usar.")
+st.markdown("Sube tu archivo `.xls` o `.xlsx` de inventario y descarga el reporte completo.")
 
 st.divider()
 
-col1, col2 = st.columns([2, 1])
+# ── Archivo ───────────────────────────────────────────────────────────────────
+uploaded = st.file_uploader("📁 Archivo de inventario (.xls / .xlsx)", type=["xls", "xlsx"])
+
+st.divider()
+
+# ── Configuración reposición ──────────────────────────────────────────────────
+st.markdown('<p class="section-title">📋 Configuración de Reposición</p>', unsafe_allow_html=True)
+col1, col2 = st.columns(2)
 with col1:
-    uploaded = st.file_uploader("📁 Archivo de inventario (.xls / .xlsx)", type=["xls", "xlsx"])
+    dias = st.selectbox("Días de reposición", [30, 45, 60], index=0)
 with col2:
-    dias = st.selectbox("📅 Días de reposición", [30, 45, 60], index=0)
+    st.markdown("")
+
+# ── Configuración transferencias ──────────────────────────────────────────────
+st.markdown('<p class="section-title">🔄 Configuración de Transferencias</p>', unsafe_allow_html=True)
+col3, col4 = st.columns(2)
+with col3:
+    dias_transfer = st.selectbox("Días mínimos a mantener", [30, 60, 90], index=0)
+with col4:
+    bodega_acopio = st.selectbox("Bodega destino (Libertad / Duran)",
+                                  ["06 Mapasingue", "11 Mapa 2"], index=0)
+
+st.divider()
 
 if uploaded:
     st.info(f"✅ Archivo cargado: **{uploaded.name}**")
 
-    if st.button("⚙️ Generar Reposición"):
+    if st.button("⚙️ Generar Reporte Completo"):
         with st.spinner("Procesando... por favor espera."):
             try:
                 suffix = ".xlsx" if uploaded.name.endswith(".xlsx") else ".xls"
@@ -53,7 +77,13 @@ if uploaded:
                     tmp_path = tmp_in.name
 
                 output_path = tmp_path + "_reposicion.xlsx"
-                out, n_prods, branches = generar_reposicion(tmp_path, dias=dias, output_path=output_path)
+                out, n_prods, branches = generar_reposicion(
+                    tmp_path,
+                    dias=dias,
+                    output_path=output_path,
+                    dias_transfer=dias_transfer,
+                    bodega_acopio=bodega_acopio
+                )
 
                 with open(output_path, "rb") as f:
                     xlsx_bytes = f.read()
@@ -66,15 +96,16 @@ if uploaded:
 
                 st.markdown(f"""
                 <div class="result-box">
-                    ✅ <b>Archivo generado correctamente</b><br>
+                    ✅ <b>Reporte generado correctamente</b><br>
                     📦 <b>{n_prods}</b> productos procesados<br>
-                    🏪 <b>{len(branches)}</b> sucursales + Mapa 2 (nueva bodega)<br>
-                    📋 <b>6 hojas:</b> Consolidado, Rep+Saldo+PVtas, Detalle Expandido, Detalle por Sucursal, Saldos, Sugerido Mapa 2
+                    🏪 <b>{len(branches)}</b> sucursales + Mapa 2<br>
+                    📋 <b>8 hojas:</b> Consolidado · Rep+Saldo · Detalle Expandido ·
+                    Detalle Sucursal · Saldos · Mapa 2 · <b>Transferencias</b> · <b>Alertas Atípicas</b>
                 </div>
                 """, unsafe_allow_html=True)
 
                 st.download_button(
-                    label="⬇️ Descargar Reposición.xlsx",
+                    label="⬇️ Descargar Reporte.xlsx",
                     data=xlsx_bytes,
                     file_name=nombre_salida,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -87,10 +118,12 @@ if uploaded:
 st.divider()
 st.markdown("""
 **📋 Hojas generadas:**
-- **Consolidado Reposición** — Vista resumen con unidades a pedir por sucursal
-- **Rep + Saldo + Cob + PVtas** — Detalle en 3 filas: Reponer / Saldo / P.Vtas
-- **Detalle Expandido** — Todas las columnas horizontales por sucursal
+- **Consolidado Reposición** — Unidades a pedir por sucursal
+- **Rep + Saldo + Cob + PVtas** — 3 filas por producto: Reponer / Saldo / P.Vtas
+- **Detalle Expandido** — Columnas horizontales por sucursal
 - **Detalle por Sucursal** — Lista plana con cobertura en días
-- **Saldos de Bodega** — Inventario actual por sucursal
-- **Sugerido Inventario Mapa 2** — Sugerido para la nueva bodega (30/45/60 días)
+- **Saldos de Bodega** — Inventario actual
+- **Sugerido Inventario Mapa 2** — Sugerido nueva bodega
+- **Transferencias** — Matriz de transferencias entre sucursales por grupo geográfico
+- **Alertas Ventas Atípicas** — Productos con ventas fuera de lo normal ⚠️
 """)

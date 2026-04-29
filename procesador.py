@@ -443,7 +443,7 @@ def sheet_mapa2(wb, products, branches, dias):
     ws["A1"].value="INVENTARIO SUGERIDO - NUEVA BODEGA MAPA 2"
     ws["A1"].font=_font(bold=True,size=13,color="7F4F00")
     ws["E1"].value="Días:"; ws["E1"].font=_font(bold=True,size=11)
-    ws["F1"].value="='Consolidado Reposición'!B1"
+    ws["F1"].value=30
     ws["F1"].font=_font(bold=True,color="7F4F00",size=11)
     ws["F1"].fill=_fill(C_YELLOW); ws["F1"].alignment=_center(); ws["F1"].border=_border()
     ws["A2"].value="Basado en ventas promedio de locales existentes. Ajusta los días según tu criterio."
@@ -486,7 +486,7 @@ def sheet_mapa2(wb, products, branches, dias):
             sug=max(0,math.ceil(avg*d/30))
             c=ws.cell(row,ci,sug); c.font=_font(bold=True,color="7F4F00",size=11)
             c.fill=_fill(C_MAPA2_HD); c.alignment=_center(); c.border=_border()
-        dyn=ws.cell(row,9,f"=MAX(0,ROUNDUP({avg}*'Consolidado Reposición'!$B$1/30,0)-0)")
+        dyn=ws.cell(row,9,f"=MAX(0,ROUNDUP({avg}*$F$1/30,0)-0)")
         dyn.font=_font(bold=True,color="7F4F00",size=11); dyn.fill=_fill(C_MAPA2_DIN)
         dyn.alignment=_center(); dyn.border=_border()
         est="OK" if avg>=3 else "BAJA ROTACIÓN"
@@ -499,14 +499,292 @@ def sheet_mapa2(wb, products, branches, dias):
     ws.freeze_panes="A4"
 
 # ── GENERADOR PRINCIPAL ───────────────────────────────────────────────────────
-def generar_reposicion(filepath, dias=30, output_path="Reposicion.xlsx"):
+def generar_reposicion(filepath, dias=30, output_path="Reposicion.xlsx",
+                        dias_transfer=30, bodega_acopio="06 Mapasingue"):
     products, branches = parse_xls(filepath)
     wb = Workbook(); wb.remove(wb.active)
     sheet_consolidado(wb, products, branches, dias)
-    sheet_rep_saldo(wb, products, branches, dias)
     sheet_detalle_expandido(wb, products, branches, dias)
-    sheet_detalle_sucursal(wb, products, branches, dias)
+    sheet_transferencias(wb, products, branches, dias_transfer, bodega_acopio)
     sheet_saldos(wb, products, branches)
+    sheet_alertas(wb, products, branches)
     sheet_mapa2(wb, products, branches, dias)
+    sheet_rep_saldo(wb, products, branches, dias)
+    sheet_detalle_sucursal(wb, products, branches, dias)
     wb.save(output_path)
     return output_path, len(products), branches
+
+
+# ── GRUPOS GEOGRÁFICOS ────────────────────────────────────────────────────────
+GRUPOS = {
+    "Grupo Sur":    ["01 Sur", "03 Centro", "06 Mapasingue", "11 Mapa 2"],
+    "Grupo Norte":  ["02 Norte", "05 Vergeles", "06 Mapasingue", "08 Bastion", "11 Mapa 2"],
+    "Grupo Playas": ["07 Playas / MC", "10 Playas 2"],
+    "Libertad":     ["04 Libertad"],   # solo transfiere a bodega acopio
+    "Duran":        ["09 Duran"],      # solo transfiere a bodega acopio
+}
+ACOPIO = ["06 Mapasingue", "11 Mapa 2"]
+
+def _get_grupo(branch):
+    for g, members in GRUPOS.items():
+        if branch in members and g not in ("Libertad", "Duran"):
+            return g
+    if branch == "04 Libertad": return "Libertad"
+    if branch == "09 Duran":    return "Duran"
+    return None
+
+def _destinos_validos(origen, bodega_acopio, branches):
+    """Retorna lista de destinos válidos para transferir desde origen."""
+    g = _get_grupo(origen)
+    if g in ("Libertad", "Duran"):
+        return [bodega_acopio] if bodega_acopio in branches else []
+    grupo_members = GRUPOS.get(g, [])
+    return [b for b in branches if b in grupo_members and b != origen]
+
+
+# ── HOJA 7: Transferencias ───────────────────────────────────────────────────
+def sheet_transferencias(wb, products, branches, dias_transfer=30, bodega_acopio="06 Mapasingue"):
+    ws = wb.create_sheet("Transferencias")
+
+    # ── Selectores ────────────────────────────────────────────────────────────
+    ws["A1"].value = "Días mínimos a mantener:"
+    ws["A1"].font  = _font(bold=True, size=11)
+    ws["B1"].value = dias_transfer
+    ws["B1"].font  = _font(bold=True, color="0000FF", size=11)
+    ws["B1"].fill  = _fill(C_YELLOW); ws["B1"].alignment = _center(); ws["B1"].border = _border()
+    ws["C1"].value = "← Cambia: 30, 60 o 90 días"
+    ws["C1"].font  = _font(color="7F7F7F", size=10)
+
+    ws["E1"].value = "Bodega destino (Libertad/Duran):"
+    ws["E1"].font  = _font(bold=True, size=11)
+    ws["F1"].value = bodega_acopio
+    ws["F1"].font  = _font(bold=True, color="7F4F00", size=11)
+    ws["F1"].fill  = _fill(C_MAPA2_HD); ws["F1"].alignment = _center(); ws["F1"].border = _border()
+    ws["G1"].value = "← 06 Mapasingue  o  11 Mapa 2"
+    ws["G1"].font  = _font(color="7F7F7F", size=10)
+
+    ws["A2"].value = "Solo se sugieren transferencias dentro del mismo grupo geográfico o hacia bodega de acopio."
+    ws["A2"].font  = _font(size=10, color="7F7F7F")
+    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[2].height = 18
+
+    # ── Leyenda grupos ────────────────────────────────────────────────────────
+    grupo_colors = {
+        "Grupo Sur":    "DAEEF3",
+        "Grupo Norte":  "EBF1DE",
+        "Grupo Playas": "FDE9D9",
+        "Libertad":     "E4DFEC",
+        "Duran":        "FCE4D6",
+    }
+    ws["A3"].value = "Grupos:"
+    ws["A3"].font  = _font(bold=True, size=10)
+    col = 2
+    for gname, gc in grupo_colors.items():
+        c = ws.cell(3, col, gname)
+        c.font = _font(bold=True, size=9)
+        c.fill = _fill(gc); c.alignment = _center(); c.border = _border()
+        members = GRUPOS.get(gname, [])
+        ws.cell(3, col+1, " | ".join(members)).font = _font(size=9)
+        ws.cell(3, col+1).alignment = _left()
+        col += 2
+
+    # ── Encabezados tabla ─────────────────────────────────────────────────────
+    headers = ["Código", "Descripción", "Origen", "Grupo", "P.Vtas/Mes",
+               "Saldo actual", "Demanda (días B1)", "Exceso disponible",
+               "Destino sugerido", "Cantidad a transferir", "Déficit destino", "Alerta ⚠️"]
+    for ci, h in enumerate(headers, 1):
+        _hdr(ws, f"{get_column_letter(ci)}4", h)
+    ws.row_dimensions[4].height = 34.5
+
+    ws.column_dimensions["A"].width = 11
+    ws.column_dimensions["B"].width = 40
+    ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 14
+    ws.column_dimensions["E"].width = 12
+    ws.column_dimensions["F"].width = 12
+    ws.column_dimensions["G"].width = 18
+    ws.column_dimensions["H"].width = 16
+    ws.column_dimensions["I"].width = 18
+    ws.column_dimensions["J"].width = 18
+    ws.column_dimensions["K"].width = 15
+    ws.column_dimensions["L"].width = 22
+
+    # ── Datos con fórmulas dinámicas ──────────────────────────────────────────
+    # Col E = P.Vtas origen
+    # Col F = Saldo origen
+    # Col G = Demanda = E * $B$1 / 30   (FÓRMULA)
+    # Col H = Exceso  = F - G            (FÓRMULA)
+    # Col K = Déficit destino (valor fijo — depende del destino elegido)
+    # Col J = Cantidad = MIN(H, K)       (FÓRMULA)
+
+    real_branches = [b for b in branches if b != "11 Mapa 2"]
+    row = 5
+
+    for p in products:
+        pvtas_vals = [p[f'{b}__pvtas'] for b in real_branches if p[f'{b}__pvtas'] > 0]
+        promedio_general = np.mean(pvtas_vals) if pvtas_vals else 0
+
+        for b in branches:
+            pvt = p[f'{b}__pvtas']
+            sal = p[f'{b}__saldo']
+
+            # Pre-calcular exceso con dias_transfer para decidir si incluir fila
+            exceso_base = sal - pvt * dias_transfer / 30
+            if exceso_base <= 0:
+                continue
+
+            destinos = _destinos_validos(b, bodega_acopio, branches)
+            if not destinos:
+                continue
+
+            # Buscar destino con mayor déficit
+            mejor_destino = None
+            mayor_deficit = 0
+            for d in destinos:
+                pvt_d = p[f'{d}__pvtas']
+                sal_d = p[f'{d}__saldo']
+                deficit_d = pvt_d * dias_transfer / 30 - sal_d
+                if deficit_d > mayor_deficit:
+                    mayor_deficit = deficit_d
+                    mejor_destino = d
+
+            if not mejor_destino:
+                continue
+
+            grupo = _get_grupo(b)
+            gc = grupo_colors.get(grupo, "FFFFFF")
+            rf = _row_fill(row % 2)
+
+            alerta = ""
+            if pvt > 0 and promedio_general > 0 and pvt > promedio_general * 2:
+                alerta = f"⚠️ Vta. atípica ({pvt:.0f} vs avg {promedio_general:.0f})"
+
+            # Columnas fijas
+            for ci, v in enumerate([p['item'], p['desc'], b, grupo], 1):
+                c = ws.cell(row, ci, v)
+                c.font = _font(size=10)
+                c.border = _border()
+                c.alignment = _left() if ci in (2, 4) else _center()
+                c.fill = _fill(gc if ci == 4 else rf)
+
+            # E: P.Vtas (valor fijo — dato del archivo)
+            ws.cell(row, 5, pvt).fill = _fill(rf)
+            ws.cell(row, 5).font = _font(size=10)
+            ws.cell(row, 5).alignment = _center()
+            ws.cell(row, 5).border = _border()
+
+            # F: Saldo actual (valor fijo — dato del archivo)
+            ws.cell(row, 6, sal).fill = _fill(rf)
+            ws.cell(row, 6).font = _font(size=10)
+            ws.cell(row, 6).alignment = _center()
+            ws.cell(row, 6).border = _border()
+
+            # G: Demanda = ROUNDUP(E * $B$1 / 30, 0)  ← FÓRMULA DINÁMICA
+            g_cell = ws.cell(row, 7, f"=ROUNDUP(E{row}*$B$1/30,0)")
+            g_cell.fill = _fill(C_HDR_LIGHT)
+            g_cell.font = _font(size=10)
+            g_cell.alignment = _center()
+            g_cell.border = _border()
+
+            # H: Exceso = MAX(0, F - G)  ← FÓRMULA DINÁMICA
+            h_cell = ws.cell(row, 8, f"=MAX(0,F{row}-G{row})")
+            h_cell.fill = _fill(C_MAPA2_DIN)
+            h_cell.font = _font(bold=True, size=10)
+            h_cell.alignment = _center()
+            h_cell.border = _border()
+
+            # I: Destino sugerido (texto fijo)
+            i_cell = ws.cell(row, 9, mejor_destino)
+            i_cell.fill = _fill(rf)
+            i_cell.font = _font(size=10)
+            i_cell.alignment = _center()
+            i_cell.border = _border()
+
+            # K: Déficit destino (valor base — referencia fija al saldo/pvtas del destino)
+            pvt_d = p[f'{mejor_destino}__pvtas']
+            sal_d = p[f'{mejor_destino}__saldo']
+            # Déficit también con fórmula dinámica: ROUNDUP(pvt_d * $B$1/30, 0) - sal_d
+            k_cell = ws.cell(row, 11, f"=MAX(0,ROUNDUP({pvt_d}*$B$1/30,0)-{int(sal_d)})")
+            k_cell.fill = _fill(C_BAJO)
+            k_cell.font = _font(size=10)
+            k_cell.alignment = _center()
+            k_cell.border = _border()
+
+            # J: Cantidad = MIN(Exceso, Déficit) ← FÓRMULA DINÁMICA
+            j_cell = ws.cell(row, 10, f"=IF(K{row}>0,MIN(H{row},K{row}),0)")
+            j_cell.fill = _fill(C_OK)
+            j_cell.font = _font(bold=True, size=10)
+            j_cell.alignment = _center()
+            j_cell.border = _border()
+
+            # L: Alerta
+            l_cell = ws.cell(row, 12, alerta)
+            l_cell.font = _font(bold=bool(alerta), size=10,
+                                color="C00000" if alerta else "000000")
+            l_cell.fill = _fill("FCE4D6" if alerta else rf)
+            l_cell.alignment = _left()
+            l_cell.border = _border()
+
+            row += 1
+
+    if row > 5:
+        ws.cell(row+1, 1, f"Total sugerencias de transferencia: {row - 5}").font = _font(bold=True, size=10)
+
+    ws.freeze_panes = "A5"
+    return ws
+
+
+# ── HOJA 8: Alertas Ventas Extraordinarias ────────────────────────────────────
+def sheet_alertas(wb, products, branches):
+    ws = wb.create_sheet("Alertas Ventas Atípicas")
+
+    ws["A1"].value = "⚠️ ALERTAS DE VENTAS ATÍPICAS"
+    ws["A1"].font  = _font(bold=True, size=13, color="C00000")
+    ws["A2"].value = "Sucursales donde P.Vtas supera el doble del promedio del resto de sucursales que venden el mismo producto."
+    ws["A2"].font  = _font(size=10, color="7F7F7F")
+
+    headers = ["Código", "Descripción", "Sucursal", "P.Vtas/Mes",
+               "Promedio otras sucursales", "Ratio (veces el promedio)", "Nivel alerta"]
+    for ci, h in enumerate(headers, 1):
+        _hdr(ws, f"{get_column_letter(ci)}3", h)
+    ws.row_dimensions[3].height = 34.5
+
+    ws.column_dimensions["A"].width = 11
+    ws.column_dimensions["B"].width = 42
+    ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 13
+    ws.column_dimensions["E"].width = 22
+    ws.column_dimensions["F"].width = 20
+    ws.column_dimensions["G"].width = 14
+
+    real_branches = [b for b in branches if b != "11 Mapa 2"]
+    row = 4
+    for p in products:
+        pvtas_vals = [(b, p[f'{b}__pvtas']) for b in real_branches if p[f'{b}__pvtas'] > 0]
+        if len(pvtas_vals) < 2:
+            continue
+        promedio = np.mean([v for _, v in pvtas_vals])
+
+        for b, pvt in pvtas_vals:
+            ratio = pvt / promedio
+            if ratio < 2.0:
+                continue
+
+            nivel = "🔴 ALTO" if ratio > 4 else "🟡 MEDIO"
+            fc = "FCE4D6" if ratio > 4 else "FFFFF2CC"
+            rf = _row_fill(row % 2)
+
+            vals = [p['item'], p['desc'], b, pvt, round(promedio, 1), round(ratio, 2), nivel]
+            for ci, v in enumerate(vals, 1):
+                c = ws.cell(row, ci, v)
+                c.font = _font(bold=(ci == 7), size=10)
+                c.border = _border()
+                c.alignment = _left() if ci == 2 else _center()
+                c.fill = _fill(fc if ci == 7 else rf)
+            row += 1
+
+    if row == 4:
+        ws.cell(4, 1, "✅ No se detectaron ventas atípicas.").font = _font(bold=True, size=11, color="375623")
+
+    ws.freeze_panes = "A4"
+    return ws
