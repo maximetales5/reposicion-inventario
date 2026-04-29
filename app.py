@@ -47,8 +47,8 @@ if uploaded:
     if st.button("⚙️ Generar Reposición"):
         with st.spinner("Procesando... por favor espera."):
             try:
-                suffix = ".xlsx" if uploaded.name.endswith(".xlsx") else ".xls"
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_in:
+               suffix = ".xlsx" if uploaded.name.endswith(".xlsx") else ".xls"
+with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_in:
                     tmp_in.write(uploaded.read())
                     tmp_path = tmp_in.name
 
