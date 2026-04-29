@@ -47,7 +47,8 @@ def _estado_color(e):
 
 # ── Parser ────────────────────────────────────────────────────────────────────
 def parse_xls(filepath):
-    df = pd.read_excel(filepath, engine="xlrd", header=None)
+   engine = "openpyxl" if filepath.endswith(".xlsx") else "xlrd"
+df = pd.read_excel(filepath, engine=engine, header=None)
     branch_starts = {}
     for col_idx, val in enumerate(df.iloc[1, :]):
         if pd.notna(val) and str(val).strip() and col_idx > 1:
